@@ -1110,19 +1110,20 @@ export default class Viewer {
       }
     }
 
-    if (this.camera.type === 'PerspectiveCamera') {
+    if (p.clipMode !== 'camera') {
 
-      this.camera.near = Math.max(0.1, p.clipDist, this.camera.near)
-      this.camera.far = Math.max(1, this.camera.far)
-      fog.near = Math.max(0.1, fog.near)
-      fog.far = Math.max(1, fog.far)
+      if (this.camera.type === 'PerspectiveCamera') {
 
-    } else if (this.camera.type === 'OrthographicCamera') {
+        this.camera.near = Math.max(0.1, p.clipDist, this.camera.near)
+        this.camera.far = Math.max(1, this.camera.far)
+        fog.near = Math.max(0.1, fog.near)
+        fog.far = Math.max(1, fog.far)
+      } else if (this.camera.type === 'OrthographicCamera') {
 
-      if (p.clipDist > 0) {
-        this.camera.near = Math.max(p.clipDist, this.camera.near)
+        if (p.clipDist > 0) {
+          this.camera.near = Math.max(p.clipDist, this.camera.near)
+        }
       }
-
     }
   }
 
@@ -1290,21 +1291,23 @@ export default class Viewer {
 
     this.rendering = true
 
-    this.__updateClipping()
-    this.__updateCamera()
-    this.__updateLights()
-    this.updateInfo(true)
+    try {
+      this.__updateClipping()
+      this.__updateCamera()
+      this.__updateLights()
+      this.updateInfo(true)
 
-    // render
-    if (this.parameters.cameraType === 'stereo') {
-      this.__renderStereo(picking)
-    } else {
-      this.__render(picking, this.camera)
+      // render
+      if (this.parameters.cameraType === 'stereo') {
+        this.__renderStereo(picking)
+      } else {
+        this.__render(picking, this.camera)
+      }
+      this.lastRenderedPicking = picking
+    } finally {
+      this.rendering = false
+      this.renderPending = false
     }
-    this.lastRenderedPicking = picking
-
-    this.rendering = false
-    this.renderPending = false
     this.signals.rendered.dispatch()
 
     // Log.timeEnd('Viewer.render')
