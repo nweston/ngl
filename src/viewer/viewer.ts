@@ -28,7 +28,7 @@ import {
   Debug, Log, WebglErrorMessage, Browser,
   setExtensionFragDepth, SupportsReadPixelsFloat, setSupportsReadPixelsFloat
 } from '../globals'
-import { degToRad } from '../math/math-utils'
+import { degToRad, radToDeg } from '../math/math-utils'
 import Stats from './stats'
 import { getShader } from '../shader/shader-utils'
 import { JitterVectors } from './viewer-constants'
@@ -52,6 +52,7 @@ const pixelOrder = [12,7,13,17,11,6,8,18,16,2,14,22,10,1,3,9,19,23,21,15,5,0,4,2
 
 
 const tmpMatrix = new Matrix4()
+const tmpVector2 = new Vector2()
 
 function onBeforeRender (this: Object3D, renderer: WebGLRenderer, scene: Scene, camera: PerspectiveCamera|OrthographicCamera, geometry: Geometry, material: ShaderMaterial/*, group */) {
   const u = material.uniforms
@@ -191,7 +192,18 @@ export default class Viewer {
   perspectiveCamera: PerspectiveCamera
   private orthographicCamera: OrthographicCamera
   private stereoCamera: StereoCamera
-  camera: PerspectiveCamera|OrthographicCamera
+  camera: PerspectiveCamera | OrthographicCamera
+  // A camera rig:
+  // The base can be moved(translated) around (in XZ) and/or rotated
+  // The stand is parented to the base and translates up & down (Y)
+  // The boom is parented to the stand and rotates up & down around the attachment point, and scales in & out
+  // The camera itself is parented to the end of the boom
+  // The camera always points toward the lookAt object
+  cameraBase: Object3D
+  cameraStand: Object3D // represents the head of the stand
+  cameraBoom: Object3D
+  cameraLookAt: Vector3
+  cameraTilt: number
 
   width: number
   height: number
@@ -323,20 +335,36 @@ export default class Viewer {
   }
 
   private _initCamera () {
-    const lookAt = new Vector3(0, 0, 0)
     const {width, height} = this
+
+    this.cameraTilt = 0
+
+    this.cameraLookAt = new Vector3() // default to 0,0
+    this.cameraBase = new Object3D()
+    this.cameraBase.name = 'cameraRigBase'
+    this.cameraBase.translateZ(this.parameters.cameraZ) // start on -Z axis
+
+    this.cameraStand = new Object3D()
+    this.cameraStand.name = 'cameraRigStand'
+    this.cameraStand.parent = this.cameraBase
+    this.cameraStand.position.y = 0
+
+    this.cameraBoom = new Object3D()
+    this.cameraBoom.name = 'cameraRigBoom'
+    this.cameraBoom.parent = this.cameraStand
 
     this.perspectiveCamera = new PerspectiveCamera(
       this.parameters.cameraFov, width / height
     )
-    this.perspectiveCamera.position.z = this.parameters.cameraZ
-    this.perspectiveCamera.lookAt(lookAt)
+    this.perspectiveCamera.parent = this.cameraBoom
+    this.perspectiveCamera.lookAt(this.cameraLookAt)
+    this.perspectiveCamera.rotateZ(this.cameraTilt)
 
     this.orthographicCamera = new OrthographicCamera(
       width / -2, width / 2, height / 2, height / -2
     )
     this.orthographicCamera.position.z = this.parameters.cameraZ
-    this.orthographicCamera.lookAt(lookAt)
+    this.orthographicCamera.lookAt(this.cameraLookAt)
 
     this.stereoCamera = new StereoCamera()
     this.stereoCamera.aspect = 0.5
@@ -351,6 +379,7 @@ export default class Viewer {
       throw new Error(`Unknown cameraType '${cameraType}'`)
     }
     this.camera.updateProjectionMatrix()
+    console.log(`initCamera: ${this.cameraRigToStr()}`)
   }
 
   private _initStats () {
@@ -571,6 +600,83 @@ export default class Viewer {
     if (!this.boundingBox.isEmpty()) {
       this.boundingBoxMesh.geometry.computeBoundingSphere()
     }
+  }
+
+  /** Update the camera rig's params.
+      Pass in r, theta or x, z for base, depending on useRTheta
+  */
+  updateCameraRig(baseROrX: number, baseThetaOrZ: number, useRTheta: boolean,
+                  standHeight: number,
+                  boomRotation: number, // rotation in X-Z plane (around Y)
+                  boomElevation: number, // rotation above X-Z plane
+                  boomLength: number,
+                  cameraTilt: number) {
+    if (useRTheta) {
+      const baseX = baseROrX * Math.cos(baseThetaOrZ)
+      const baseZ = baseROrX * Math.sin(baseThetaOrZ)
+      this.cameraBase.position.set(baseX, baseZ, 0)
+    }
+    else {
+      this.cameraBase.position.set(baseROrX, baseThetaOrZ, 0)
+    }
+    this.cameraStand.position.set(0, standHeight, 0)
+    this.cameraBoom.position.set(0, boomLength, 0)
+    this.cameraBoom.rotation.set(0, boomRotation, boomElevation) // rotate around local Z axis (at its base)
+    this.camera.lookAt(this.cameraLookAt)
+    this.camera.rotation.set(0, 0, cameraTilt)
+  }
+
+  setLookAt(point: Vector3) {
+    this.cameraLookAt.copy(point)
+    this.camera.lookAt(this.cameraLookAt)
+  }
+
+  getCameraBasePolar() {
+    tmpVector2.set(this.cameraBase.position.x, this.cameraBase.position.z)
+    return [tmpVector2.length(), tmpVector2.angle()]
+  }
+
+  setCameraBasePolar(r: number, theta: number) {
+    this.cameraBase.position.x = r * Math.cos(theta)
+    this.cameraBase.position.z = r * Math.sin(theta)
+    this.camera.lookAt(this.cameraLookAt)
+  }
+
+  setCameraDistance(d: number) {
+    const polar = this.getCameraBasePolar()
+    this.setCameraBasePolar(d, polar[1])
+    console.log(this.cameraRigToStr())
+  }
+  getCameraDistance() {
+    const polar = this.getCameraBasePolar()
+    return polar[0]
+  }
+
+  /** For base, returns both r,theta and x,z for convenience */
+  getCameraRig() {
+    tmpVector2.set(this.cameraBase.position.x, this.cameraBase.position.z)
+    return {baseX: this.cameraBase.position.x,
+            baseZ: this.cameraBase.position.z,
+            baseR: tmpVector2.length(),
+            baseTheta: tmpVector2.angle(),
+            standHeight: this.cameraStand.position.y,
+            boomLength: this.cameraBoom.position.y,
+            boomRotation: this.cameraBoom.rotation.y,
+            boomElevation: this.cameraBoom.rotation.z,
+            cameraTilt: this.camera.rotation.z,
+            lookAt: this.cameraLookAt}
+  }
+
+  cameraRigToStr() {
+    tmpVector2.set(this.cameraBase.position.x, this.cameraBase.position.z)
+    // Why not some Unicode chars to shorten the printout (angle, perpendicular, theta, phi),
+    return `base x,z: ${tmpVector2.x.toFixed(2)}, ${tmpVector2.y.toFixed(2)}, ` +
+      `r,\u2220: ${tmpVector2.length().toFixed(2)}, ${radToDeg(tmpVector2.angle()).toFixed(1)}\u00b0; ` +
+      `stand ht: ${this.cameraStand.position.y.toFixed(2)}; ` +
+      `boom len: ${this.cameraBoom.position.y.toFixed(2)}, ` +
+      `\u03b8:${radToDeg(this.cameraBoom.rotation.y).toFixed(1)}, \u03c6:${radToDeg(this.cameraBoom.rotation.z).toFixed(1)}; ` +
+      `tilt: ${radToDeg(this.camera.rotation.z).toFixed(1)}; ` +
+      `lookAt: ${this.cameraLookAt.toArray().map(x => x.toFixed(2))}`
   }
 
   add (buffer: Buffer, instanceList?: BufferInstance[]) {
@@ -1022,7 +1128,7 @@ export default class Viewer {
 
   updateZoom () {
     const fov = degToRad(this.perspectiveCamera.fov)
-    const height = 2 * Math.tan(fov / 2) * -this.camera.position.z
+    const height = 2 * Math.tan(fov / 2) * -this.getCameraDistance() // fix for camera rig
     this.orthographicCamera.zoom = this.height / height
   }
 
@@ -1064,10 +1170,11 @@ export default class Viewer {
       this.bRadius = 50
     }
 
-    this.cDist = this.distVector.copy(this.camera.position).length()
+    this.camera.getWorldPosition(this.distVector)
+    this.cDist = this.distVector.length()
     if (!this.cDist) {
       // recover from a broken (NaN) camera position
-      this.camera.position.set(0, 0, p.cameraZ)
+      this.setCameraDistance(Math.abs(p.cameraZ))
       this.cDist = Math.abs(p.cameraZ)
     }
 
