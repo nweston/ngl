@@ -129,7 +129,7 @@ class ViewerControls {
     const v = this.viewer
     v.rotationGroup.setRotationFromQuaternion(tmpQ)
     v.translationGroup.position.copy(tmpP)
-    v.setCameraDistance(tmpS.z)
+    v.cameraDistance = tmpS.z
     v.updateZoom()
     this.changed()
   }
@@ -169,7 +169,7 @@ class ViewerControls {
    * get camera distance
    */
   getCameraDistance(): number {
-    return this.viewer.getCameraBasePolar()[0]
+    return this.viewer.cameraDistance
   }
 
   /**
@@ -180,7 +180,7 @@ class ViewerControls {
   distance (distance: number) {
     // Math.abs because distance used to be "z", normally negative.
     // Math.max to prevent us from getting _too_ close.
-    this.viewer.setCameraDistance(Math.max(Math.abs(distance), 0.2))
+    this.viewer.cameraDistance = Math.max(Math.abs(distance), 0.2)
     this.viewer.updateZoom()
     this.changed()
   }
