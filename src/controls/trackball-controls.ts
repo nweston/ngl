@@ -73,12 +73,24 @@ class TrackballControls {
     ]
   }
 
+  private _getCameraRotation() {
+    const cameraRotation = new Matrix4().extractRotation(this.viewer.camera.matrixWorld)
+    cameraRotation.multiply(new Matrix4().makeRotationY(Math.PI))
+
+    return cameraRotation
+  }
+
   private _transformPanVector () {
     if (!this.component) return
 
+    // Adjust for component and scene rotation
     tmpPanMatrix.extractRotation(this.component.transform)
     tmpPanMatrix.premultiply(this.viewer.rotationGroup.matrix)
     tmpPanMatrix.getInverse(tmpPanMatrix)
+
+    // Adjust for camera rotation
+    tmpPanMatrix.multiply(this._getCameraRotation())
+
     tmpPanVector.applyMatrix4(tmpPanMatrix)
   }
 
@@ -89,7 +101,12 @@ class TrackballControls {
   pan (x: number, y: number) {
     this._setPanVector(x, y)
 
+    // Adjust for scene rotation
     tmpPanMatrix.getInverse(this.viewer.rotationGroup.matrix)
+
+    // Adjust for camera rotation
+    tmpPanMatrix.multiply(this._getCameraRotation())
+
     tmpPanVector.applyMatrix4(tmpPanMatrix)
     this.controls.translate(tmpPanVector)
   }
